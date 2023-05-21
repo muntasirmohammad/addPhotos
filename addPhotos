@@ -1,0 +1,158 @@
+#!/bin/bash
+# The following goes first, so we can refer back the directory containing these scripts.
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+QUESTION_DIR="$HOME/addPhotos"
+DB_DIR="$QUESTION_DIR/database"
+PHOTOS_DIR="$DB_DIR/photos"
+
+
+
+# Code taken and slightly modified from http://mywiki.wooledge.org/BashFAQ/045
+# Ensures only one instance of the script is running at once
+lockdir=/tmp/myscript.lock
+if mkdir -- "$lockdir"
+then    # directory did not exist, but was created successfully
+    # continue script
+    trap 'rm -rf -- "$lockdir"' 0    # remove directory when script finishes
+    tmpfile=$lockdir/filelist
+else
+    echo >&2 "An instance of addPhotos is already running"
+    exit 127
+fi
+
+
+# Check if cksum_file.txt DNE in $DB_DIR if so, create empty file
+if [ ! -f $DB_DIR/cksum_file.txt ]
+then
+    touch $DB_DIR/cksum_file.txt
+fi
+# Check if filenames.txt DNE in $DB_DIR if so, create empty file
+if [ ! -f $DB_DIR/filenames.txt ]
+then
+    touch $DB_DIR/filenames.txt
+fi
+
+
+
+
+# Creating a boolean variable to check if first argument is -v
+v=false
+
+# If the number of args is at least 1, --help or -v is a possible first arg
+if (( $# > 0 ))
+then
+	# Check if the very first argument is -v
+	if [ "$1" = "-v" ]
+	then
+		# Set v to true
+		v=true
+		# Shift the first argument to the next
+		shift
+	# Check if the very first argument is --help
+	elif [ "$1" = "--help" ]
+	then
+		# Display usage message and exit successfully
+		echo "Usage: ./addPhotos [OPTION] dir1 [dir2]...
+Add all photo(s) from given directories into the $PHOTOS_DIR directory
+
+Must include at least one directory
+
+  -v            add all photos with verbose output, identifying the fate of each file in dir1 ...
+  --help        display usage message and exit
+
+Examples:
+  ./addPhotos dir          Add all photos from dir not already in $PHOTOS_DIR 
+                           into $PHOTOS_DIR
+  ./addPhotos dir1 dir2    Add all photos from dir1, dir2 not already in $PHOTOS_DIR 
+                           into $PHOTOS_DIR
+  ./addPhotos -v dir       Add all photos from dir not already in $PHOTOS_DIR 
+                           into $PHOTOS_DIR with verbose output
+  "
+		exit 0
+	fi
+fi
+
+# At this point we can assume the rest of the arguments are directories
+
+#If the number of arguments now is 0
+if (( $# == 0 ))
+then
+	# Print usage message and exit with error code 127
+	echo "Try './addPhotos --help' for more information." 1>&2
+	exit 127
+fi
+
+
+# Using a boolean variable to check if given photo content exists in $PHOTOS_DIR
+content_in=false
+
+# Using a variable to keep track of file names
+i=0
+
+
+# Looping through each argument assuming each argument is a directory
+while (( $# > 0 ))
+do
+	# Check if given directory exists
+	if [[ -d "$1" ]]
+	then
+		# Looping through each argument/directory and accessing all files under
+		# the given directory
+		for f in $1/*
+		do
+			# If the file exists
+			if [[ -f "$f" ]]
+			then
+				# Save the checksum hash of the file into a variable
+				checksum=$(cksum < $f | awk {'print $1'})
+				# Check if the checksum hash exists in $DB_DIR/cksum_file.txt
+				if grep -q "$checksum" $DB_DIR/cksum_file.txt
+				then
+					# If it does, change content_in to true
+					content_in=true
+				else
+					# If it does not, send the checksum hash code to cksum_file.txt
+					# and change content_in to false
+					echo $checksum >> $DB_DIR/cksum_file.txt
+					content_in=false
+				fi
+
+
+				# If the file content does not exists in $PHOTOS_DIR
+				if [[ $content_in == false ]]
+				then
+					# Checking how many lines are in filenames.txt
+					lines=$(cat $DB_DIR/filenames.txt | wc -l)
+					# Then copy the file into $PHOTOS_DIR with a different name
+					cp "$f" "$PHOTOS_DIR/$lines"
+					# Add a line to filenames.txt to ensure lines+=1
+					echo 1 >> $DB_DIR/filenames.txt
+
+					if [[ $v == true ]]
+					then
+						# Print copied the file to stdout
+						echo "copied $f"
+					fi
+
+				# If the file content already exists in $PHOTOS_DIR
+				else
+					# If verbose option was chosen
+					if [[ $v == true ]]
+					then
+						# Print message duplicateImage
+						echo "duplicateImage $f"
+					fi
+				fi
+			fi
+		done
+
+
+	# If given directory does not exist
+	else
+		# Send message to stderr
+		echo "directory $1 does not exist" 1>&2
+	fi
+	# Shift the first argument to the next
+	shift
+done
